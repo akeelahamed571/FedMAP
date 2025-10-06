@@ -11,6 +11,12 @@ import data_preparation
 import models
 from fedmap import FedMAPClient
 
+# --- Fix Hydra vs CLI arg conflict ---
+import sys, os
+if len(sys.argv) > 1 and sys.argv[1].isdigit():
+    os.environ["CLIENT_ID"] = sys.argv[1]
+    sys.argv = [sys.argv[0]]  # Strip CLI arg so Hydra won’t parse it
+
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
@@ -28,12 +34,18 @@ def main(cfg: DictConfig) -> None:
 
     logger.info("📋 Loaded configuration:\n" + OmegaConf.to_yaml(cfg))
 
-    # Data
-    train_loader, val_loader, test_loader = data_preparation.load_partition(
-        batch_size=cfg.batch_size
-    )
+    # --- Load client-specific partition ---
+    client_id = int(os.environ.get("CLIENT_ID", 0))
+    logger.info(f"📥 Loading data for client {client_id}")
 
-    # Model
+    train_df, val_df, test_df = data_preparation.load_partition_for_client(client_id)
+
+    from torch.utils.data import DataLoader
+    train_loader = DataLoader(data_preparation.HatefulMemesDataset(train_df), batch_size=cfg.batch_size, shuffle=True)
+    val_loader = DataLoader(data_preparation.HatefulMemesDataset(val_df), batch_size=cfg.batch_size)
+    test_loader = DataLoader(data_preparation.HatefulMemesDataset(test_df), batch_size=cfg.batch_size)
+
+    # --- Model ---
     model = instantiate(cfg.model).to(device)
 
     # Train/Test functions
@@ -55,7 +67,7 @@ def main(cfg: DictConfig) -> None:
         metadata_fn=None,
     )
 
-    logger.info("🔁 Connecting to Flower server at localhost:8080 ...")
+    logger.info(f"🔁 [Client {client_id}] Connecting to Flower server at localhost:8080 ...")
     fl.client.start_numpy_client(server_address="localhost:8080", client=client)
 
 
