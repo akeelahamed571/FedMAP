@@ -31,9 +31,10 @@ def load_partition_for_client(client_id: int):
     return train_df, val_df, test_df
 
 
-def load_server_test_data(limit: int = 200):
-    """Load server_test.csv (download & unzip if missing).
-       Optionally limit number of samples to reduce CPU usage."""
+
+
+def load_server_test_data(limit=None):
+    """Load server_test.csv (download & unzip if missing)."""
     if not os.path.exists(SERVER_CSV_PATH):
         print(f"⚠️ server_test.csv not found at {SERVER_CSV_PATH}")
         print("⬇️ Downloading from Google Drive...")
@@ -47,18 +48,25 @@ def load_server_test_data(limit: int = 200):
         with zipfile.ZipFile(SERVER_ZIP_PATH, "r") as zip_ref:
             zip_ref.extractall(SERVER_DATA_DIR)
 
-        if not os.path.exists(SERVER_CSV_PATH):
+        # 🔎 Search recursively for server_test.csv
+        found_csv = None
+        for root, dirs, files in os.walk(SERVER_DATA_DIR):
+            if "server_test.csv" in files:
+                found_csv = os.path.join(root, "server_test.csv")
+                break
+
+        if not found_csv:
             raise FileNotFoundError(
-                f"❌ server_test.csv still not found after download/unzip at {SERVER_CSV_PATH}"
+                f"❌ server_test.csv still not found after download/unzip in {SERVER_DATA_DIR}"
             )
 
+        print(f"✅ Found server_test.csv at {found_csv}")
+        global SERVER_CSV_PATH
+        SERVER_CSV_PATH = found_csv  # update global path
+
     df = pd.read_csv(SERVER_CSV_PATH)
-
-    # ✅ Subsample to avoid CPU overload
-    if limit and len(df) > limit:
-        print(f"⚠️ Limiting server_test.csv from {len(df)} → {limit} samples")
-        df = df.sample(n=limit, random_state=42).reset_index(drop=True)
-
+    if limit:
+        df = df.sample(n=min(limit, len(df)), random_state=42).reset_index(drop=True)
     return df
 
 
@@ -68,6 +76,7 @@ def gl_model_torch_validation(batch_size: int = 32, max_len: int = 128):
     dataset = HatefulMemesDataset(df, max_len=max_len, use_server_data=True)
     # ✅ Use num_workers=0 to avoid CPU spike in Kubernetes
     return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+
 
 
 class HatefulMemesDataset(Dataset):
@@ -82,20 +91,32 @@ class HatefulMemesDataset(Dataset):
 
         # ✅ Use server images if required
         if use_server_data:
-            if not os.path.exists(SERVER_IMG_DIR):
-                raise FileNotFoundError(
-                    f"❌ Server images directory not found: {SERVER_IMG_DIR}"
-                )
-            self.cache_dir = SERVER_IMG_DIR
+            img_dir = SERVER_IMG_DIR
+            if not os.path.exists(img_dir):
+                # 🔎 Search recursively for "img" folder
+                found_img = None
+                for root, dirs, files in os.walk(SERVER_DATA_DIR):
+                    if os.path.basename(root) == "img":
+                        found_img = root
+                        break
+                if not found_img:
+                    raise FileNotFoundError(
+                        f"❌ Server images directory not found in {SERVER_DATA_DIR}"
+                    )
+                print(f"✅ Found img folder at {found_img}")
+                img_dir = found_img
+
+            self.cache_dir = img_dir
         else:
             if not os.path.exists(IMG_DIR):
                 raise FileNotFoundError(
                     f"❌ Local image directory not found: {IMG_DIR}\n"
-                    "Make sure you ran `git lfs pull` or have local data."
+                    f"Make sure you ran `git lfs pull` or have local data."
                 )
             self.cache_dir = IMG_DIR
 
         print(f"📁 Using image directory: {self.cache_dir}")
+
 
     def __len__(self):
         return len(self.df)
