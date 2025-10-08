@@ -10,7 +10,7 @@ import gdown, zipfile
 # ✅ NEW (server dataset location)
 SERVER_DATA_DIR = os.path.abspath("./server_data")
 SERVER_IMG_DIR = os.path.join(SERVER_DATA_DIR, "img")
-SERVER_CSV_PATH = os.path.join(SERVER_DATA_DIR, "server_test.csv")
+SERVER_CSV_PATH_DEFAULT = os.path.join(SERVER_DATA_DIR, "server_test.csv")
 SERVER_ZIP_PATH = os.path.join(SERVER_DATA_DIR, "server_data.zip")
 
 # 🔑 Google Drive link for auto-download
@@ -32,12 +32,14 @@ def load_partition_for_client(client_id: int):
 
 
 def load_server_test_data(limit: int = 200):
-    """Load server_test.csv (download & unzip if missing).
-       Optionally limit number of samples to reduce CPU usage."""
-    global SERVER_CSV_PATH   # ✅ declare first
+    """
+    Load server_test.csv (download & unzip if missing).
+    Optionally limit number of samples to reduce CPU usage.
+    """
+    server_csv_path = SERVER_CSV_PATH_DEFAULT
 
-    if not os.path.exists(SERVER_CSV_PATH):
-        print(f"⚠️ server_test.csv not found at {SERVER_CSV_PATH}")
+    if not os.path.exists(server_csv_path):
+        print(f"⚠️ server_test.csv not found at {server_csv_path}")
         print("⬇️ Downloading from Google Drive...")
 
         os.makedirs(SERVER_DATA_DIR, exist_ok=True)
@@ -62,9 +64,9 @@ def load_server_test_data(limit: int = 200):
             )
 
         print(f"✅ Found server_test.csv at {found_csv}")
-        SERVER_CSV_PATH = found_csv  # update global path
+        server_csv_path = found_csv  # update to discovered path
 
-    df = pd.read_csv(SERVER_CSV_PATH)
+    df = pd.read_csv(server_csv_path)
 
     # ✅ Subsample to avoid CPU overload
     if limit and len(df) > limit:
@@ -72,7 +74,6 @@ def load_server_test_data(limit: int = 200):
         df = df.sample(n=limit, random_state=42).reset_index(drop=True)
 
     return df
-
 
 
 def gl_model_torch_validation(batch_size: int = 32, max_len: int = 128):
