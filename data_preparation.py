@@ -31,10 +31,11 @@ def load_partition_for_client(client_id: int):
     return train_df, val_df, test_df
 
 
+def load_server_test_data(limit: int = 200):
+    """Load server_test.csv (download & unzip if missing).
+       Optionally limit number of samples to reduce CPU usage."""
+    global SERVER_CSV_PATH   # ✅ declare first
 
-
-def load_server_test_data(limit=None):
-    """Load server_test.csv (download & unzip if missing)."""
     if not os.path.exists(SERVER_CSV_PATH):
         print(f"⚠️ server_test.csv not found at {SERVER_CSV_PATH}")
         print("⬇️ Downloading from Google Drive...")
@@ -61,13 +62,17 @@ def load_server_test_data(limit=None):
             )
 
         print(f"✅ Found server_test.csv at {found_csv}")
-        global SERVER_CSV_PATH
         SERVER_CSV_PATH = found_csv  # update global path
 
     df = pd.read_csv(SERVER_CSV_PATH)
-    if limit:
-        df = df.sample(n=min(limit, len(df)), random_state=42).reset_index(drop=True)
+
+    # ✅ Subsample to avoid CPU overload
+    if limit and len(df) > limit:
+        print(f"⚠️ Limiting server_test.csv from {len(df)} → {limit} samples")
+        df = df.sample(n=limit, random_state=42).reset_index(drop=True)
+
     return df
+
 
 
 def gl_model_torch_validation(batch_size: int = 32, max_len: int = 128):
@@ -76,7 +81,6 @@ def gl_model_torch_validation(batch_size: int = 32, max_len: int = 128):
     dataset = HatefulMemesDataset(df, max_len=max_len, use_server_data=True)
     # ✅ Use num_workers=0 to avoid CPU spike in Kubernetes
     return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-
 
 
 class HatefulMemesDataset(Dataset):
@@ -116,7 +120,6 @@ class HatefulMemesDataset(Dataset):
             self.cache_dir = IMG_DIR
 
         print(f"📁 Using image directory: {self.cache_dir}")
-
 
     def __len__(self):
         return len(self.df)
