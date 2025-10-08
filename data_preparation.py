@@ -37,6 +37,13 @@ def load_server_test_data():
             "Make sure the Drive download/unzip step happens before loading data."
         )
     return pd.read_csv(SERVER_CSV_PATH)
+from torch.utils.data import DataLoader
+
+def gl_model_torch_validation(batch_size: int = 32, max_len: int = 128):
+    """Return DataLoader for global server validation (using server_test.csv)."""
+    df = load_server_test_data()
+    dataset = HatefulMemesDataset(df, max_len=max_len, use_server_data=True)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
 
 class HatefulMemesDataset(Dataset):
