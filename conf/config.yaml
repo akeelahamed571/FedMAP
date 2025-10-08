@@ -16,7 +16,7 @@ dataset:
   validation_split: 0.2
 
 # Client
-task_id: 'fedmap'
+task_id: 'fedmaps'
 
 wandb:
   use: false
