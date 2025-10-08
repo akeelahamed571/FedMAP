@@ -2,7 +2,6 @@ import random
 import logging
 import numpy as np
 import torch
-import flwr as fl
 import hydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
@@ -16,6 +15,9 @@ import sys, os
 if len(sys.argv) > 1 and sys.argv[1].isdigit():
     os.environ["CLIENT_ID"] = sys.argv[1]
     sys.argv = [sys.argv[0]]  # Strip CLI arg so Hydra won’t parse it
+
+# ✅ import FedOps task manager
+from fedops.client.app import FLClientTask
 
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
@@ -52,8 +54,8 @@ def main(cfg: DictConfig) -> None:
     train_fn = models.train_torch(mu=cfg.fedprox_mu, focal_gamma=cfg.focal_gamma)
     test_fn = models.test_torch()
 
-    # FedMAP Client
-    client = FedMAPClient(
+    # ✅ Build FedMAP Client (your custom logic)
+    fedmap_client = FedMAPClient(
         model=model,
         train_fn=train_fn,
         test_fn=test_fn,
@@ -67,8 +69,25 @@ def main(cfg: DictConfig) -> None:
         metadata_fn=None,
     )
 
-    logger.info(f"🔁 [Client {client_id}] Connecting to Flower server at localhost:8080 ...")
-    fl.client.start_numpy_client(server_address="localhost:8080", client=client)
+    # ✅ Prepare FedOps registration (as FedOps expects)
+    registration = {
+        "train_loader": train_loader,
+        "val_loader": val_loader,
+        "test_loader": test_loader,
+        "model": model,
+        "model_name": type(model).__name__,
+        "train_torch": train_fn,
+        "test_torch": test_fn,
+    }
+
+    # ✅ Create FedOps client task
+    fl_client = FLClientTask(cfg, registration)
+
+    # 🔀 Monkey-patch FedMAP client into FedOps task
+    fl_client.client = fedmap_client.to_client()
+
+    logger.info(f"🔁 [Client {client_id}] Starting FedOps FL client …")
+    fl_client.start()
 
 
 if __name__ == "__main__":
