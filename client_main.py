@@ -16,17 +16,19 @@ if len(sys.argv) > 1 and sys.argv[1].isdigit():
     os.environ["CLIENT_ID"] = sys.argv[1]
     sys.argv = [sys.argv[0]]  # Strip CLI arg so Hydra won’t parse it
 
-# ✅ Monkey-patch FedOps/Flower NumPyClient to accept config
-import flwr as fl
-if hasattr(fl.client, "NumPyClient"):
-    base_cls = fl.client.NumPyClient
-    if "config" not in base_cls.get_parameters.__code__.co_varnames:
-        def patched_get_parameters(self, config=None):
-            return self.get_parameters()
-        base_cls.get_parameters = patched_get_parameters
-
 # ✅ import FedOps task manager
 from fedops.client.app import FLClientTask
+import flwr as fl
+
+
+# ✅ Patch FLClientTask so it uses start_client instead of deprecated start_numpy_client
+class PatchedFLClientTask(FLClientTask):
+    def start(self):
+        logging.info("🔗 Starting client with modern Flower API (start_client)")
+        fl.client.start_client(
+            server_address=f"{self.cfg.server_ip}:{self.cfg.server_port}",
+            client=self.client,  # already patched with FedMAPClient.to_client()
+        )
 
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
@@ -63,7 +65,7 @@ def main(cfg: DictConfig) -> None:
     train_fn = models.train_torch(mu=cfg.fedprox_mu, focal_gamma=cfg.focal_gamma)
     test_fn = models.test_torch()
 
-    # ✅ Build FedMAP Client (your custom logic)
+    # ✅ Build FedMAP Client (custom logic)
     fedmap_client = FedMAPClient(
         model=model,
         train_fn=train_fn,
@@ -78,7 +80,7 @@ def main(cfg: DictConfig) -> None:
         metadata_fn=None,
     )
 
-    # ✅ Prepare FedOps registration (as FedOps expects)
+    # ✅ Prepare FedOps registration (FedOps expects this)
     registration = {
         "train_loader": train_loader,
         "val_loader": val_loader,
@@ -89,8 +91,8 @@ def main(cfg: DictConfig) -> None:
         "test_torch": test_fn,
     }
 
-    # ✅ Create FedOps client task
-    fl_client = FLClientTask(cfg, registration)
+    # ✅ Use patched FLClientTask
+    fl_client = PatchedFLClientTask(cfg, registration)
 
     # 🔀 Monkey-patch FedMAP client into FedOps task
     fl_client.client = fedmap_client.to_client()
