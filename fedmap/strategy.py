@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import flwr as fl
+from flwr.server.strategy import FedAvg   # ✅ use FedAvg as base
 from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 import optuna
 from typing import List
@@ -27,7 +28,7 @@ class AggregatorMLP(nn.Module):
         return self.fc2(self.relu(self.fc1(x)))
 
 
-class ModalityAwareAggregation(fl.server.strategy.Strategy):
+class ModalityAwareAggregation(FedAvg):   # ✅ now inherit FedAvg
     """
     Option B (teacher-student):
       - Teacher attention (per round) = softmax( sum_j alpha_j * z(feature_j) )
@@ -54,7 +55,24 @@ class ModalityAwareAggregation(fl.server.strategy.Strategy):
         n_trials_per_round: int = 6,
         perf_mix_lambda: float = 0.7,  # λ in perf_mix
         z_clip: float = 3.0,           # winsorize z-scores to [-z_clip, z_clip]
+        # ✅ new passthrough args for FedAvg
+        fraction_fit: float = 1.0,
+        fraction_evaluate: float = 1.0,
+        min_fit_clients: int = 2,
+        min_evaluate_clients: int = 2,
+        min_available_clients: int = 2,
+        **kwargs,
     ):
+        # ✅ initialize FedAvg with standard arguments
+        super().__init__(
+            fraction_fit=fraction_fit,
+            fraction_evaluate=fraction_evaluate,
+            min_fit_clients=min_fit_clients,
+            min_evaluate_clients=min_evaluate_clients,
+            min_available_clients=min_available_clients,
+            **kwargs,
+        )
+
         self.evaluate_fn = evaluate_fn
         self.aggregator_path = aggregator_path
         self.entropy_coeff = float(entropy_coeff)
@@ -85,7 +103,6 @@ class ModalityAwareAggregation(fl.server.strategy.Strategy):
         self.alpha_bal  = 0.05
 
     # ------------------------------ utils ---------------------------------
-
     @staticmethod
     def _zscore(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
         return (x - x.mean()) / (x.std() + eps)
@@ -95,7 +112,6 @@ class ModalityAwareAggregation(fl.server.strategy.Strategy):
         return torch.clamp(z, -self.z_clip, self.z_clip)
 
     # --------------------------- Flower API --------------------------------
-
     def initialize_parameters(self, client_manager):
         return None  # pull from a client
 
@@ -148,7 +164,7 @@ class ModalityAwareAggregation(fl.server.strategy.Strategy):
         ck_values = torch.tensor(ck_values, dtype=torch.float32, device=_DEVICE)                 # (C,)
         diversity_scores = torch.tensor(diversity_scores, dtype=torch.float32, device=_DEVICE)   # (C,)
         modality_scores = torch.tensor(modality_scores, dtype=torch.float32, device=_DEVICE)     # (C,)
-        nks = torch.tensor(nks, dtype=torch.float32, device=_DEVICE)                              # (C,)
+        nks = torch.tensor(nks, dtype=torch.float32, device=_DEVICE)                             # (C,)
         val_losses = torch.tensor(val_losses, dtype=torch.float32, device=_DEVICE)               # (C,)
         grad_norms = torch.tensor(grad_norms, dtype=torch.float32, device=_DEVICE)               # (C,)
         imb_ratios = torch.tensor(imb_ratios, dtype=torch.float32, device=_DEVICE)               # (C,)
@@ -170,7 +186,6 @@ class ModalityAwareAggregation(fl.server.strategy.Strategy):
         perf_feat = self._zscore_clip(perf_mix)
         size_feat = self._zscore_clip(size_feat)
         div_feat = self._zscore_clip(div_feat)
-        # for modality you can keep raw or z-score; we z-score for consistency
         mod_feat = self._zscore_clip(mod_feat)
         bal_feat = self._zscore_clip(bal_feat_raw)
 
@@ -224,13 +239,9 @@ class ModalityAwareAggregation(fl.server.strategy.Strategy):
             alphas = torch.tensor([a_perf, a_size, a_div, a_mod, a_vl, a_gn, a_bal], dtype=torch.float32, device=_DEVICE)
             s = float(alphas.sum().item())
             if s <= 0:
-                # degenerate; prune
                 raise optuna.TrialPruned()
 
-            # Normalize to sum=1 for interpretability/stability
             alphas = alphas / s
-
-            # logits per client: (C,7) @ (7,) → (C,)
             logits_teacher = teacher_feats @ alphas
             attn_teacher = torch.softmax(logits_teacher, dim=0)
 
