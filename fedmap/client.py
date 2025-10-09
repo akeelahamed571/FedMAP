@@ -55,19 +55,22 @@ class FedMAPClient(fl.client.NumPyClient):
         self._modality_div = 1.0 if (ut and ui) else 0.5
 
     # ---------------------
-    # Flower methods
+    # Flower methods (patched for Flower >=1.10)
     # ---------------------
 
-    def get_parameters(self, config):
+    def get_parameters(self, config=None):
+        """Return model parameters as a list of NumPy ndarrays."""
         return [v.detach().cpu().numpy() for v in self.model.state_dict().values()]
 
-    def set_parameters(self, parameters, config):
+    def set_parameters(self, parameters):
+        """Set model parameters from list of NumPy ndarrays."""
         state_dict = dict(zip(self.model.state_dict().keys(), parameters))
         self.model.load_state_dict({k: torch.tensor(v) for k, v in state_dict.items()}, strict=True)
 
-    def fit(self, parameters, config):
+    def fit(self, parameters, config=None):
+        """Train model on local data."""
         # Load global weights
-        self.set_parameters(parameters, config)
+        self.set_parameters(parameters)
 
         # New optimizer
         optimizer = torch.optim.Adam(
@@ -83,8 +86,6 @@ class FedMAPClient(fl.client.NumPyClient):
         _, acc_before, _ = self.test_fn(self.model, self.val_loader, cfg=self.modality_flags)
 
         # ---- Track gradient norm ----
-        grad_norm = 0.0
-
         def compute_grad_norm():
             total_norm = 0.0
             for p in self.model.parameters():
@@ -135,10 +136,11 @@ class FedMAPClient(fl.client.NumPyClient):
 
         return self.get_parameters(config), self._n_k, metrics
 
-    def evaluate(self, parameters, config):
-        self.set_parameters(parameters, config)
+    def evaluate(self, parameters, config=None):
+        """Evaluate model on local test set."""
+        self.set_parameters(parameters)
         loss, accuracy, metrics = self.test_fn(self.model, self.test_loader, cfg=self.modality_flags)
-        return loss, len(self.test_loader.dataset), metrics
+        return float(loss), len(self.test_loader.dataset), {"accuracy": float(accuracy), **metrics}
 
     # ---------------------
     # Helpers
