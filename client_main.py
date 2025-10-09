@@ -25,8 +25,18 @@ import flwr as fl
 class PatchedFLClientTask(FLClientTask):
     def start(self):
         logging.info("🔗 Starting client with modern Flower API (start_client)")
+
+        # Try to reuse FedOps internal server_address if available
+        server_address = getattr(self, "server_address", None)
+
+        # If not set, fallback to env vars
+        if server_address is None:
+            ip = os.environ.get("FL_SERVER_IP", "127.0.0.1")
+            port = os.environ.get("FL_SERVER_PORT", "8080")
+            server_address = f"{ip}:{port}"
+
         fl.client.start_client(
-            server_address=f"{self.cfg.server_ip}:{self.cfg.server_port}",
+            server_address=server_address,
             client=self.client,  # already patched with FedMAPClient.to_client()
         )
 
@@ -54,9 +64,19 @@ def main(cfg: DictConfig) -> None:
     train_df, val_df, test_df = data_preparation.load_partition_for_client(client_id)
 
     from torch.utils.data import DataLoader
-    train_loader = DataLoader(data_preparation.HatefulMemesDataset(train_df), batch_size=cfg.batch_size, shuffle=True)
-    val_loader = DataLoader(data_preparation.HatefulMemesDataset(val_df), batch_size=cfg.batch_size)
-    test_loader = DataLoader(data_preparation.HatefulMemesDataset(test_df), batch_size=cfg.batch_size)
+    train_loader = DataLoader(
+        data_preparation.HatefulMemesDataset(train_df),
+        batch_size=cfg.batch_size,
+        shuffle=True
+    )
+    val_loader = DataLoader(
+        data_preparation.HatefulMemesDataset(val_df),
+        batch_size=cfg.batch_size
+    )
+    test_loader = DataLoader(
+        data_preparation.HatefulMemesDataset(test_df),
+        batch_size=cfg.batch_size
+    )
 
     # --- Model ---
     model = instantiate(cfg.model).to(device)
