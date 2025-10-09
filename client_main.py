@@ -18,27 +18,6 @@ if len(sys.argv) > 1 and sys.argv[1].isdigit():
 
 # ✅ import FedOps task manager
 from fedops.client.app import FLClientTask
-import flwr as fl
-
-
-# ✅ Patch FLClientTask so it uses start_client instead of deprecated start_numpy_client
-class PatchedFLClientTask(FLClientTask):
-    def start(self):
-        logging.info("🔗 Starting client with modern Flower API (start_client)")
-
-        # Try to reuse FedOps internal server_address if available
-        server_address = getattr(self, "server_address", None)
-
-        # If not set, fallback to env vars
-        if server_address is None:
-            ip = os.environ.get("FL_SERVER_IP", "127.0.0.1")
-            port = os.environ.get("FL_SERVER_PORT", "8080")
-            server_address = f"{ip}:{port}"
-
-        fl.client.start_client(
-            server_address=server_address,
-            client=self.client,  # already patched with FedMAPClient.to_client()
-        )
 
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
@@ -64,19 +43,12 @@ def main(cfg: DictConfig) -> None:
     train_df, val_df, test_df = data_preparation.load_partition_for_client(client_id)
 
     from torch.utils.data import DataLoader
-    train_loader = DataLoader(
-        data_preparation.HatefulMemesDataset(train_df),
-        batch_size=cfg.batch_size,
-        shuffle=True
-    )
-    val_loader = DataLoader(
-        data_preparation.HatefulMemesDataset(val_df),
-        batch_size=cfg.batch_size
-    )
-    test_loader = DataLoader(
-        data_preparation.HatefulMemesDataset(test_df),
-        batch_size=cfg.batch_size
-    )
+    train_loader = DataLoader(data_preparation.HatefulMemesDataset(train_df),
+                              batch_size=cfg.batch_size, shuffle=True)
+    val_loader = DataLoader(data_preparation.HatefulMemesDataset(val_df),
+                            batch_size=cfg.batch_size)
+    test_loader = DataLoader(data_preparation.HatefulMemesDataset(test_df),
+                             batch_size=cfg.batch_size)
 
     # --- Model ---
     model = instantiate(cfg.model).to(device)
@@ -100,7 +72,7 @@ def main(cfg: DictConfig) -> None:
         metadata_fn=None,
     )
 
-    # ✅ Prepare FedOps registration (FedOps expects this)
+    # ✅ Prepare FedOps registration
     registration = {
         "train_loader": train_loader,
         "val_loader": val_loader,
@@ -111,10 +83,10 @@ def main(cfg: DictConfig) -> None:
         "test_torch": test_fn,
     }
 
-    # ✅ Use patched FLClientTask
-    fl_client = PatchedFLClientTask(cfg, registration)
+    # ✅ Create FedOps client task
+    fl_client = FLClientTask(cfg, registration)
 
-    # 🔀 Monkey-patch FedMAP client into FedOps task
+    # 🔀 Attach FedMAP client
     fl_client.client = fedmap_client.to_client()
 
     logger.info(f"🔁 [Client {client_id}] Starting FedOps FL client …")
