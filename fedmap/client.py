@@ -1,4 +1,3 @@
-# fedmap/client.py
 import torch
 import flwr as fl
 
@@ -38,8 +37,6 @@ class FedMAPClient(fl.client.NumPyClient):
         self.metadata_fn = metadata_fn
 
         self.device = next(self.model.parameters()).device
-
-        # Precompute dataset size
         self._n_k = len(self.train_loader.dataset)
 
         # Precompute class counts
@@ -55,37 +52,26 @@ class FedMAPClient(fl.client.NumPyClient):
         self._modality_div = 1.0 if (ut and ui) else 0.5
 
     # ---------------------
-    # Flower methods (patched for Flower >=1.10)
+    # Flower API (with config=None, safe for 1.0.0 and later)
     # ---------------------
 
     def get_parameters(self, config=None):
-        """Return model parameters as a list of NumPy ndarrays."""
         return [v.detach().cpu().numpy() for v in self.model.state_dict().values()]
 
     def set_parameters(self, parameters):
-        """Set model parameters from list of NumPy ndarrays."""
         state_dict = dict(zip(self.model.state_dict().keys(), parameters))
         self.model.load_state_dict({k: torch.tensor(v) for k, v in state_dict.items()}, strict=True)
 
     def fit(self, parameters, config=None):
-        """Train model on local data."""
-        # Load global weights
         self.set_parameters(parameters)
+        optimizer = torch.optim.Adam(self.model.parameters(),
+                                     lr=self.local_lr,
+                                     weight_decay=self.local_weight_decay)
 
-        # New optimizer
-        optimizer = torch.optim.Adam(
-            self.model.parameters(),
-            lr=self.local_lr,
-            weight_decay=self.local_weight_decay,
-        )
-
-        # Save global params for FedProx
         global_params = {k: v.clone().detach().cpu() for k, v in self.model.state_dict().items()}
 
-        # Eval before
         _, acc_before, _ = self.test_fn(self.model, self.val_loader, cfg=self.modality_flags)
 
-        # ---- Track gradient norm ----
         def compute_grad_norm():
             total_norm = 0.0
             for p in self.model.parameters():
@@ -93,22 +79,15 @@ class FedMAPClient(fl.client.NumPyClient):
                     total_norm += p.grad.data.norm(2).item() ** 2
             return total_norm ** 0.5
 
-        # Train locally
-        self.train_fn(
-            self.model,
-            self.train_loader,
-            optimizer=optimizer,
-            epochs=self.local_epochs,
-            cfg=self.modality_flags,
-            global_params=global_params,
-        )
+        self.train_fn(self.model, self.train_loader,
+                      optimizer=optimizer,
+                      epochs=self.local_epochs,
+                      cfg=self.modality_flags,
+                      global_params=global_params)
 
         grad_norm = compute_grad_norm()
-
-        # Eval after
         val_loss, acc_after, _ = self.test_fn(self.model, self.val_loader, cfg=self.modality_flags)
 
-        # Build metadata
         if self.metadata_fn is not None:
             metrics = self.metadata_fn(
                 model=self.model,
@@ -123,11 +102,8 @@ class FedMAPClient(fl.client.NumPyClient):
         else:
             metrics = self._default_metadata(acc_before=acc_before, acc_after=acc_after)
 
-        # ✅ Add extra metrics
         total = (self._num_pos or 0) + (self._num_neg or 0)
-        imbalance_ratio = (
-            float(self._num_pos) / total if total > 0 and self._num_pos is not None else 0.0
-        )
+        imbalance_ratio = float(self._num_pos) / total if total > 0 and self._num_pos is not None else 0.0
         metrics.update({
             "val_loss": float(val_loss),
             "grad_norm": float(grad_norm),
@@ -137,7 +113,6 @@ class FedMAPClient(fl.client.NumPyClient):
         return self.get_parameters(config), self._n_k, metrics
 
     def evaluate(self, parameters, config=None):
-        """Evaluate model on local test set."""
         self.set_parameters(parameters)
         loss, accuracy, metrics = self.test_fn(self.model, self.test_loader, cfg=self.modality_flags)
         return float(loss), len(self.test_loader.dataset), {"accuracy": float(accuracy), **metrics}
@@ -167,8 +142,7 @@ class FedMAPClient(fl.client.NumPyClient):
                 else:
                     neg += 1
         except Exception:
-            pos = None
-            neg = None
+            pos, neg = None, None
 
         self._num_pos = pos
         self._num_neg = neg
@@ -193,7 +167,6 @@ class FedMAPClient(fl.client.NumPyClient):
         stats = self._cached_stats()
         ck = float(acc_after - acc_before)
         pk = float(acc_after)
-
         return {
             "c_k": ck,
             "p_k": pk,
