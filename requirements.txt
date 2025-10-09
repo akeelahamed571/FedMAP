@@ -35,7 +35,7 @@ executing==1.2.0
 fastapi==0.115.12
 fedops==1.1.29.6
 filelock==3.18.0
-flwr==1.19.0
+flwr==1.0.0
 fonttools==4.51.0
 frozenlist==1.6.0
 fsspec==2025.3.0
