@@ -16,6 +16,15 @@ if len(sys.argv) > 1 and sys.argv[1].isdigit():
     os.environ["CLIENT_ID"] = sys.argv[1]
     sys.argv = [sys.argv[0]]  # Strip CLI arg so Hydra won’t parse it
 
+# ✅ Monkey-patch FedOps/Flower NumPyClient to accept config
+import flwr as fl
+if hasattr(fl.client, "NumPyClient"):
+    base_cls = fl.client.NumPyClient
+    if "config" not in base_cls.get_parameters.__code__.co_varnames:
+        def patched_get_parameters(self, config=None):
+            return self.get_parameters()
+        base_cls.get_parameters = patched_get_parameters
+
 # ✅ import FedOps task manager
 from fedops.client.app import FLClientTask
 
