@@ -134,41 +134,42 @@ def main(cfg: DictConfig) -> None:
 
     
     
-        # ---------------- Compatibility shim for old NumPyClient.get_parameters ----------------
+    # ---------------- Compatibility shim (v2): patch Flower App to wrap client's get_parameters ----------------
     try:
         import types, inspect
         import flwr.client.app as flapp
 
-        _orig_start_numpy_client = flapp.start_numpy_client
+        # Patch App.__init__ so the instance Flower stores is always wrapped
+        _orig_App_init = flapp.App.__init__
 
-        def _wrap_get_parameters_if_needed(numpy_client):
-            """If client's get_parameters has no 'config', wrap it to accept it."""
-            gp = getattr(numpy_client, "get_parameters", None)
+        def _app_init_patched(self, numpy_client, *args, **kwargs):
+            # call original __init__ first (it will set self.numpy_client, etc.)
+            _orig_App_init(self, numpy_client, *args, **kwargs)
+
+            # Wrap get_parameters on the instance if it doesn't accept 'config'
+            gp = getattr(self.numpy_client, "get_parameters", None)
             if gp is None:
-                return numpy_client
+                return
+
             try:
                 sig = inspect.signature(gp)
                 if "config" not in sig.parameters:
-                    # Wrap to ignore config kwarg but call the original no-arg method.
-                    def _gp_with_config(self, config=None, **kwargs):
+                    # define a method that accepts config but ignores it, calling the original
+                    def _gp_with_config(_self, config=None, **kw):
                         return gp()
-                    numpy_client.get_parameters = types.MethodType(_gp_with_config, numpy_client)
+                    self.numpy_client.get_parameters = types.MethodType(_gp_with_config, self.numpy_client)
             except Exception:
-                # Be permissive: fallback wrapper which ignores config if passing it fails
-                def _gp_with_config(self, config=None, **kwargs):
+                # Safe fallback
+                def _gp_with_config(_self, config=None, **kw):
                     return gp()
-                numpy_client.get_parameters = types.MethodType(_gp_with_config, numpy_client)
-            return numpy_client
+                self.numpy_client.get_parameters = types.MethodType(_gp_with_config, self.numpy_client)
 
-        def start_numpy_client_patched(server_address: str, client, grpc_max_message_length: int = 536_870_912):
-            client = _wrap_get_parameters_if_needed(client)
-            return _orig_start_numpy_client(server_address=server_address, client=client,
-                                            grpc_max_message_length=grpc_max_message_length)
+        flapp.App.__init__ = _app_init_patched
+        logger.info("✅ Patched Flower App.__init__ to adapt old NumPyClient.get_parameters signature.")
 
-        flapp.start_numpy_client = start_numpy_client_patched
-        logger.info("✅ Patched Flower start_numpy_client to adapt old get_parameters signature.")
     except Exception as e:
-        logger.warning(f"Could not patch Flower NumPyClient compatibility: {e}")
+        logger.warning(f"Could not patch Flower App compatibility: {e}")
+
 
 
     
