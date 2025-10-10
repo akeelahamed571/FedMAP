@@ -132,6 +132,46 @@ def main(cfg: DictConfig) -> None:
     except Exception as e:
         logger.warning(f"Could not patch Flower signal handling safely, proceeding anyway: {e}")
 
+    
+    
+        # ---------------- Compatibility shim for old NumPyClient.get_parameters ----------------
+    try:
+        import types, inspect
+        import flwr.client.app as flapp
+
+        _orig_start_numpy_client = flapp.start_numpy_client
+
+        def _wrap_get_parameters_if_needed(numpy_client):
+            """If client's get_parameters has no 'config', wrap it to accept it."""
+            gp = getattr(numpy_client, "get_parameters", None)
+            if gp is None:
+                return numpy_client
+            try:
+                sig = inspect.signature(gp)
+                if "config" not in sig.parameters:
+                    # Wrap to ignore config kwarg but call the original no-arg method.
+                    def _gp_with_config(self, config=None, **kwargs):
+                        return gp()
+                    numpy_client.get_parameters = types.MethodType(_gp_with_config, numpy_client)
+            except Exception:
+                # Be permissive: fallback wrapper which ignores config if passing it fails
+                def _gp_with_config(self, config=None, **kwargs):
+                    return gp()
+                numpy_client.get_parameters = types.MethodType(_gp_with_config, numpy_client)
+            return numpy_client
+
+        def start_numpy_client_patched(server_address: str, client, grpc_max_message_length: int = 536_870_912):
+            client = _wrap_get_parameters_if_needed(client)
+            return _orig_start_numpy_client(server_address=server_address, client=client,
+                                            grpc_max_message_length=grpc_max_message_length)
+
+        flapp.start_numpy_client = start_numpy_client_patched
+        logger.info("✅ Patched Flower start_numpy_client to adapt old get_parameters signature.")
+    except Exception as e:
+        logger.warning(f"Could not patch Flower NumPyClient compatibility: {e}")
+
+
+    
     # ---------------- Launch FL client (starts FastAPI; training begins via POST /start) ----------------
     fl_client = FLClientTask(cfg, registration)
     fl_client.start()
