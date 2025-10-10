@@ -13,15 +13,8 @@ import models
 from fedmap.client import FedMAPClient
 
 
-@hydra.main(config_path="./conf", config_name="config", version_base=None)
-def main(cfg: DictConfig) -> None:
-    # ✅ Catch CLI positional arg like `python client_main.py 0`
-    if len(sys.argv) > 1:
-        try:
-            cfg.client_id = int(sys.argv[1])
-        except ValueError:
-            raise ValueError(f"Invalid client_id argument: {sys.argv[1]}")
-
+def run_client(cfg: DictConfig, client_id: int) -> None:
+    """Main logic moved here, with explicit client_id arg."""
     # ---------------- Logging ----------------
     handlers_list = [logging.StreamHandler()]
     logging.basicConfig(
@@ -31,7 +24,7 @@ def main(cfg: DictConfig) -> None:
     )
     logger = logging.getLogger(__name__)
 
-    # ---------------- Reproducibility ----------------
+    # Reproducibility
     random.seed(cfg.random_seed)
     np.random.seed(cfg.random_seed)
     torch.manual_seed(cfg.random_seed)
@@ -39,7 +32,6 @@ def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
 
     # ---------------- Data Loading ----------------
-    client_id = cfg.client_id
     train_df, val_df, test_df = data_preparation.load_partition_for_client(client_id)
 
     train_dataset = data_preparation.HatefulMemesDataset(train_df, max_len=cfg.max_len)
@@ -57,7 +49,7 @@ def main(cfg: DictConfig) -> None:
     model = model.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     logger.info(f"✅ Initialized model: {type(model).__name__}")
 
-    # ---------------- Train & Test Functions ----------------
+    # ---------------- Train & Test ----------------
     train_torch = models.train_torch(mu=cfg.get("fedprox_mu", 0.0))
     test_torch  = models.test_torch()
 
@@ -80,6 +72,18 @@ def main(cfg: DictConfig) -> None:
         server_address=cfg.server_address,
         client=fl_client
     )
+
+
+@hydra.main(config_path="./conf", config_name="config", version_base=None)
+def main(cfg: DictConfig) -> None:
+    # Hydra entry point
+    if len(sys.argv) > 1 and sys.argv[1].isdigit():
+        client_id = int(sys.argv[1])
+        sys.argv.pop(1)  # ✅ remove it before Hydra sees it
+    else:
+        client_id = 0  # default
+
+    run_client(cfg, client_id)
 
 
 if __name__ == "__main__":
