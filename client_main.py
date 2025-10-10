@@ -1,5 +1,12 @@
 # client_main.py
 import sys
+
+# --- PRE-PROCESS CLI args before Hydra sees them ---
+extra_args = []
+if len(sys.argv) > 1 and sys.argv[1].isdigit():
+    extra_args.append(int(sys.argv[1]))   # save client_id
+    sys.argv = [sys.argv[0]] + sys.argv[2:]  # strip it so Hydra never sees it
+
 import random
 import hydra
 import numpy as np
@@ -14,7 +21,6 @@ from fedmap.client import FedMAPClient
 
 
 def run_client(cfg: DictConfig, client_id: int) -> None:
-    """Main logic moved here, with explicit client_id arg."""
     # ---------------- Logging ----------------
     handlers_list = [logging.StreamHandler()]
     logging.basicConfig(
@@ -76,13 +82,8 @@ def run_client(cfg: DictConfig, client_id: int) -> None:
 
 @hydra.main(config_path="./conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
-    # Hydra entry point
-    if len(sys.argv) > 1 and sys.argv[1].isdigit():
-        client_id = int(sys.argv[1])
-        sys.argv.pop(1)  # ✅ remove it before Hydra sees it
-    else:
-        client_id = 0  # default
-
+    # fallback client_id = 0
+    client_id = extra_args[0] if extra_args else 0
     run_client(cfg, client_id)
 
 
