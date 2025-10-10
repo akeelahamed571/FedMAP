@@ -13,7 +13,6 @@ import models
 from fedops.client import client_utils
 from fedops.client.app import FLClientTask
 
-
 # --- Extract client_id BEFORE Hydra parses ---
 extra_args = []
 if len(sys.argv) > 1 and sys.argv[1].isdigit():
@@ -83,6 +82,10 @@ def main(cfg: DictConfig) -> None:
     }
 
     # ---------------- Launch FL client ----------------
+    import flwr
+    # 🚀 PATCH: disable Flower’s signal handling to fix "main thread" crash
+    flwr.client.app._app_state_tracker.register_signal_handler = lambda *a, **k: None
+
     fl_client = FLClientTask(cfg, registration)
     fl_client.start()
 
