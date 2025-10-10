@@ -11,7 +11,8 @@ import sys
 import yaml
 import uuid
 import socket
-from typing import ClassVar, Optional #newly added for class var local host
+from typing import Optional
+from typing import ClassVar, Optional
 
 handlers_list = [logging.StreamHandler()]
 if "MONITORING" in os.environ:
@@ -52,6 +53,7 @@ class manager_status(BaseModel):
     global today_str, inform_SE
 
     # FL_client: str = '0.0.0.0:8003'
+    
     if len(sys.argv) == 1:
         #FL_client: ClassVar[str] = "localhost:8003"
         FL_client = 'localhost:8003'
