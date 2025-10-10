@@ -1,4 +1,3 @@
-# client_main.py
 import sys
 import random
 import hydra
@@ -11,7 +10,8 @@ from hydra.utils import instantiate
 import data_preparation
 import models
 from fedops.client import client_utils
-from fedops.client.app import FLClientTask
+# ❌ MOVE THIS IMPORT DOWN (after we patch Flower)
+# from fedops.client.app import FLClientTask
 
 # --- Extract client_id BEFORE Hydra parses ---
 extra_args = []
@@ -83,16 +83,11 @@ def main(cfg: DictConfig) -> None:
     }
 
     # ---------------- Robust FIX for Flower signal-in-subthread crash ----------------
-    # This client runs Flower inside a FastAPI background task (NOT the main thread).
-    # Older/newer Flower versions keep the signal registration in different places.
-    # We try them in order; if none found, last-resort: neuter signal.signal.
     try:
-        import flwr
+        import flwr  # ensure Flower is importable early
         import signal
 
         patched = False
-
-        # 1) Newer path: flwr.client.app.AppStateTracker.register_signal_handler
         try:
             import flwr.client.app as flapp
             if hasattr(flapp, "AppStateTracker"):
@@ -100,17 +95,14 @@ def main(cfg: DictConfig) -> None:
                 patched = True
         except Exception:
             pass
-
-        # 2) Older internal singleton(s)
         if not patched:
             try:
+                import flwr.client.app as flapp
                 if hasattr(flapp, "_app_state_tracker"):
                     flapp._app_state_tracker.register_signal_handler = lambda *a, **k: None
                     patched = True
             except Exception:
                 pass
-
-        # 3) Some builds expose app_state module
         if not patched:
             try:
                 from flwr.client import app_state as _app_state_mod  # type: ignore
@@ -119,60 +111,65 @@ def main(cfg: DictConfig) -> None:
                     patched = True
             except Exception:
                 pass
-
-        # 4) Last resort: disable signal.signal so background thread registration won't crash
         if not patched:
-            # keep a reference if you ever want to restore:
             _orig_signal = signal.signal
-            signal.signal = lambda *a, **k: None  # noqa: E731
+            signal.signal = lambda *a, **k: None
             logger.warning("⚠️ Falling back to global signal.signal no-op to avoid thread signal crash.")
-
         logger.info("✅ Flower signal handling patched for background execution.")
-
     except Exception as e:
         logger.warning(f"Could not patch Flower signal handling safely, proceeding anyway: {e}")
 
-    
-    
-    # ---------------- Compatibility shim (v2): patch Flower App to wrap client's get_parameters ----------------
+    # ---------------- Compatibility shim: patch Flower's start_numpy_client BEFORE importing FedOps ----------------
     try:
         import types, inspect
-        import flwr.client.app as flapp
 
-        # Patch App.__init__ so the instance Flower stores is always wrapped
-        _orig_App_init = flapp.App.__init__
+        # Try both possible locations (depends on Flower version)
+        flapp = None
+        try:
+            import flwr.client.app as flapp  # flwr 1.x
+        except Exception:
+            flapp = None
 
-        def _app_init_patched(self, numpy_client, *args, **kwargs):
-            # call original __init__ first (it will set self.numpy_client, etc.)
-            _orig_App_init(self, numpy_client, *args, **kwargs)
+        # Fallback: some versions expose start_numpy_client at flwr.client
+        if flapp is None or not hasattr(flapp, "start_numpy_client"):
+            import flwr.client as flclient
+            target_module = flclient
+            orig_start = getattr(flclient, "start_numpy_client")
+        else:
+            target_module = flapp
+            orig_start = getattr(flapp, "start_numpy_client")
 
-            # Wrap get_parameters on the instance if it doesn't accept 'config'
-            gp = getattr(self.numpy_client, "get_parameters", None)
+        def _wrap_get_parameters_if_needed(numpy_client):
+            gp = getattr(numpy_client, "get_parameters", None)
             if gp is None:
-                return
-
+                return numpy_client
             try:
                 sig = inspect.signature(gp)
                 if "config" not in sig.parameters:
-                    # define a method that accepts config but ignores it, calling the original
-                    def _gp_with_config(_self, config=None, **kw):
+                    def _gp_with_config(self, config=None, **kwargs):
+                        # old-style client: ignore config, call original
                         return gp()
-                    self.numpy_client.get_parameters = types.MethodType(_gp_with_config, self.numpy_client)
+                    numpy_client.get_parameters = types.MethodType(_gp_with_config, numpy_client)
             except Exception:
-                # Safe fallback
-                def _gp_with_config(_self, config=None, **kw):
+                def _gp_with_config(self, config=None, **kwargs):
                     return gp()
-                self.numpy_client.get_parameters = types.MethodType(_gp_with_config, self.numpy_client)
+                numpy_client.get_parameters = types.MethodType(_gp_with_config, numpy_client)
+            return numpy_client
 
-        flapp.App.__init__ = _app_init_patched
-        logger.info("✅ Patched Flower App.__init__ to adapt old NumPyClient.get_parameters signature.")
+        def start_numpy_client_patched(*, server_address: str, client, grpc_max_message_length: int = 536_870_912, **kw):
+            client = _wrap_get_parameters_if_needed(client)
+            return orig_start(server_address=server_address, client=client,
+                              grpc_max_message_length=grpc_max_message_length, **kw)
 
+        # Patch the symbol FedOps will import
+        setattr(target_module, "start_numpy_client", start_numpy_client_patched)
+        logger.info("✅ Patched Flower start_numpy_client to adapt old NumPyClient.get_parameters signature (pre-FedOps import).")
     except Exception as e:
-        logger.warning(f"Could not patch Flower App compatibility: {e}")
+        logger.warning(f"Could not patch Flower NumPyClient compatibility: {e}")
 
+    # ✅ NOW import FedOps, so it sees the patched start_numpy_client
+    from fedops.client.app import FLClientTask  # <-- moved here
 
-
-    
     # ---------------- Launch FL client (starts FastAPI; training begins via POST /start) ----------------
     fl_client = FLClientTask(cfg, registration)
     fl_client.start()
