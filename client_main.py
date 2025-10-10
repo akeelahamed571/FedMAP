@@ -36,13 +36,13 @@ def run_client(cfg: DictConfig, client_id: int) -> None:
     torch.manual_seed(cfg.random_seed)
 
     print(OmegaConf.to_yaml(cfg))
-
+    max_len = getattr(cfg, "max_len", 128)
     # ---------------- Data Loading ----------------
     train_df, val_df, test_df = data_preparation.load_partition_for_client(client_id)
 
-    train_dataset = data_preparation.HatefulMemesDataset(train_df, max_len=cfg.max_len)
-    val_dataset   = data_preparation.HatefulMemesDataset(val_df,   max_len=cfg.max_len)
-    test_dataset  = data_preparation.HatefulMemesDataset(test_df,  max_len=cfg.max_len)
+    train_dataset = data_preparation.HatefulMemesDataset(train_df, max_len=max_len)
+    val_dataset   = data_preparation.HatefulMemesDataset(val_df,   max_len=max_len)
+    test_dataset  = data_preparation.HatefulMemesDataset(test_df,  max_len=max_len)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=0)
     val_loader   = torch.utils.data.DataLoader(val_dataset,   batch_size=cfg.batch_size, shuffle=False, num_workers=0)
