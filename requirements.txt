@@ -1,6 +1,6 @@
 
---no-deps
-flwr==1.13.0
+
+flwr==1.14.0
 fedops==1.1.29.6
 grpcio==1.64.1
 cryptography==42.0.7
