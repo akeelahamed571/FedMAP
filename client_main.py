@@ -1,97 +1,82 @@
+# client_main.py
 import random
-import logging
+import hydra
 import numpy as np
 import torch
-import hydra
-from hydra.utils import instantiate
+import logging
 from omegaconf import DictConfig, OmegaConf
+from hydra.utils import instantiate
 
+# import your modules
 import data_preparation
 import models
-from fedmap import FedMAPClient
+from fedmap.client import FedMAPClient   # ✅ your custom Flower client
 
-# --- Fix Hydra vs CLI arg conflict ---
-import sys, os
-if len(sys.argv) > 1 and sys.argv[1].isdigit():
-    os.environ["CLIENT_ID"] = sys.argv[1]
-    sys.argv = [sys.argv[0]]  # Strip CLI arg so Hydra won’t parse it
-
-# ✅ import FedOps task manager
-from fedops.client.app import FLClientTask
-
-
-@hydra.main(config_path="conf", config_name="config", version_base=None)
+@hydra.main(config_path="./conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
-    # Device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device.type == "cuda":
-        torch.backends.cudnn.benchmark = True
+    # ---------------- Logging ----------------
+    handlers_list = [logging.StreamHandler()]
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)8.8s] %(message)s",
+        handlers=handlers_list,
+    )
+    logger = logging.getLogger(__name__)
 
-    # Logging & Seeds
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-    logger = logging.getLogger("client")
+    # ---------------- Reproducibility ----------------
     random.seed(cfg.random_seed)
     np.random.seed(cfg.random_seed)
     torch.manual_seed(cfg.random_seed)
 
-    logger.info("📋 Loaded configuration:\n" + OmegaConf.to_yaml(cfg))
+    print(OmegaConf.to_yaml(cfg))
 
-    # --- Load client-specific partition ---
-    client_id = int(os.environ.get("CLIENT_ID", 0))
-    logger.info(f"📥 Loading data for client {client_id}")
-
+    # ---------------- Data Loading ----------------
+    # client_id must come from config (set per client container)
+    client_id = cfg.client_id
     train_df, val_df, test_df = data_preparation.load_partition_for_client(client_id)
 
-    from torch.utils.data import DataLoader
-    train_loader = DataLoader(data_preparation.HatefulMemesDataset(train_df),
-                              batch_size=cfg.batch_size, shuffle=True)
-    val_loader = DataLoader(data_preparation.HatefulMemesDataset(val_df),
-                            batch_size=cfg.batch_size)
-    test_loader = DataLoader(data_preparation.HatefulMemesDataset(test_df),
-                             batch_size=cfg.batch_size)
+    # Wrap into datasets/dataloaders
+    train_dataset = data_preparation.HatefulMemesDataset(train_df, max_len=cfg.max_len)
+    val_dataset   = data_preparation.HatefulMemesDataset(val_df,   max_len=cfg.max_len)
+    test_dataset  = data_preparation.HatefulMemesDataset(test_df,  max_len=cfg.max_len)
 
-    # --- Model ---
-    model = instantiate(cfg.model).to(device)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=0)
+    val_loader   = torch.utils.data.DataLoader(val_dataset,   batch_size=cfg.batch_size, shuffle=False, num_workers=0)
+    test_loader  = torch.utils.data.DataLoader(test_dataset,  batch_size=cfg.batch_size, shuffle=False, num_workers=0)
 
-    # Train/Test functions
-    train_fn = models.train_torch(mu=cfg.fedprox_mu, focal_gamma=cfg.focal_gamma)
-    test_fn = models.test_torch()
+    logger.info(f"✅ Client {client_id} data loaded: train={len(train_dataset)}, val={len(val_dataset)}, test={len(test_dataset)}")
 
-    # ✅ Build FedMAP Client (custom logic)
-    fedmap_client = FedMAPClient(
+    # ---------------- Model ----------------
+    model = instantiate(cfg.model)  # uses HatefulMemesFusionModel from models.py
+    model_name = type(model).__name__
+    model = model.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+
+    logger.info(f"✅ Initialized model: {model_name}")
+
+    # ---------------- Train & Test Functions ----------------
+    train_torch = models.train_torch(mu=cfg.get("fedprox_mu", 0.0))
+    test_torch  = models.test_torch()
+
+    # ---------------- Flower Client ----------------
+    fl_client = FedMAPClient(
         model=model,
-        train_fn=train_fn,
-        test_fn=test_fn,
+        train_fn=train_torch,
+        test_fn=test_torch,
         train_loader=train_loader,
         val_loader=val_loader,
         test_loader=test_loader,
         modality_flags={"use_text": 1, "use_image": 1},
-        local_lr=float(cfg.lr),
-        local_weight_decay=float(cfg.weight_decay),
-        local_epochs=int(cfg.num_epochs),
-        metadata_fn=None,
+        local_lr=cfg.get("local_lr", 1e-5),
+        local_weight_decay=cfg.get("local_weight_decay", 1e-4),
+        local_epochs=cfg.get("local_epochs", 1),
     )
 
-    # ✅ Prepare FedOps registration
-    registration = {
-        "train_loader": train_loader,
-        "val_loader": val_loader,
-        "test_loader": test_loader,
-        "model": model,
-        "model_name": type(model).__name__,
-        "train_torch": train_fn,
-        "test_torch": test_fn,
-    }
-
-    # ✅ Create FedOps client task
-    fl_client = FLClientTask(cfg, registration)
-
-    # 🔀 Attach FedMAP client
-    fl_client.client = fedmap_client.to_client()
-
-    logger.info(f"🔁 [Client {client_id}] Starting FedOps FL client …")
-    fl_client.start()
-
+    # ---------------- Start Flower ----------------
+    import flwr as fl
+    fl.client.start_client(
+        server_address=cfg.server_address,
+        client=fl_client
+    )
 
 if __name__ == "__main__":
     main()
