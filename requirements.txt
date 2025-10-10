@@ -22,7 +22,7 @@ click==8.1.8
 colorlog==6.9.0
 comm==0.1.4
 contourpy==1.2.1
-cryptography==44.0.3
+cryptography==42.0.7
 cycler==0.12.1
 datasets==3.6.0
 debugpy==1.6.7.post1
