@@ -59,7 +59,7 @@ class manager_status(BaseModel):
         #FL_client: ClassVar[str] = 'fl-client:8003'
         FL_client = 'fl-client:8003'
     server_ST: str = 'ccl.gachon.ac.kr:40019'
-    server: str = 'ccl.gachon.ac.kr:40039'
+    server: str = 'ccl.gachon.ac.kr'
     S3_bucket: str = 'fl-gl-model'
     s3_ready: bool = False
     GL_Model_V: int = 0  # model version
