@@ -170,9 +170,31 @@ def main(cfg: DictConfig) -> None:
     # ✅ NOW import FedOps, so it sees the patched start_numpy_client
     from fedops.client.app import FLClientTask  # <-- moved here
 
-    # ---------------- Launch FL client (starts FastAPI; training begins via POST /start) ----------------
+    
+        # ---------------- Launch FL client (starts FastAPI; training begins via POST /start) ----------------
     fl_client = FLClientTask(cfg, registration)
+
+    # --- Compatibility: expose legacy endpoint name expected by Client Manager ---
+    try:
+        from fastapi import APIRouter
+
+        router = APIRouter()
+
+        # Support both POST and GET just in case the manager calls either.
+        @router.post("/FL_client_start")
+        @router.get("/FL_client_start")
+        async def _legacy_FL_client_start():
+            # Delegate to the existing start handler
+            return await fl_client.fl_client_start()
+
+        fl_client.app.include_router(router)
+        logger.info("✅ Added /FL_client_start alias for Client Manager compatibility.")
+    except Exception as e:
+        logger.warning(f"Could not add /FL_client_start alias: {e}")
+
     fl_client.start()
+
+    
 
 
 if __name__ == "__main__":
