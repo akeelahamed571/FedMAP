@@ -12,7 +12,6 @@ import yaml
 import uuid
 import socket
 from typing import Optional
-from typing import ClassVar, Optional
 
 handlers_list = [logging.StreamHandler()]
 if "MONITORING" in os.environ:
@@ -53,12 +52,9 @@ class manager_status(BaseModel):
     global today_str, inform_SE
 
     # FL_client: str = '0.0.0.0:8003'
-    
     if len(sys.argv) == 1:
-        #FL_client: ClassVar[str] = "localhost:8003"
         FL_client = 'localhost:8003'
     else:
-        #FL_client: ClassVar[str] = 'fl-client:8003'
         FL_client = 'fl-client:8003'
     server_ST: str = 'ccl.gachon.ac.kr:40019'
     server: str = 'ccl.gachon.ac.kr'
@@ -296,14 +292,15 @@ async def start_training():
 
             manager.client_training = True
             logging.info(f'client_start code: {res.status_code}')
-            if (res.status_code == 200) and (res.json()['FL_client_start']):
+            body = res.json() if res.content else {}
+            if (res.status_code == 200) and (body.get('client_start') is True or body.get('FL_client_start') is True):
                 logging.info('flclient learning')
-
             elif res.status_code != 200:
                 manager.client_online = False
                 logging.info('flclient offline')
             else:
                 pass
+
         else:
             # await asyncio.sleep(11)
             pass
