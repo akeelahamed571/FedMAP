@@ -1,5 +1,5 @@
 # Federated Learning Core
-flwr==1.0.0
+
 fedops
 
 # Communication & Security
