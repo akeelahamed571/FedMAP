@@ -2,14 +2,7 @@
 
 fedops
 
-# Communication & Security
-grpcio
-cryptography
 
-# Config Management
-hydra-core
-omegaconf
-PyYAML
 
 # API / Client Manager
 fastapi
