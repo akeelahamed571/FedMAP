@@ -4,12 +4,6 @@ fedops
 
 
 
-# API / Client Manager
-fastapi
-uvicorn
-pydantic
-requests
-
 # ML / DL Core
 torch
 torchvision
